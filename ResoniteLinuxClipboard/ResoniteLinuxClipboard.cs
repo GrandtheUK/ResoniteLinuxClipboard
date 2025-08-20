@@ -4,13 +4,11 @@ using System.Runtime.InteropServices;
 using System.Text;
 
 using FrooxEngine;
-using HarmonyLib;
 using ResoniteModLoader;
 using Elements.Assets;
-using Renderite.Shared;
 using System.Threading.Tasks;
 using Elements.Core;
-using System.Runtime.CompilerServices;
+using System.Reflection;
 
 namespace ResoniteLinuxClipboard;
 
@@ -29,6 +27,7 @@ public class ResoniteLinuxClipboard : ResoniteMod {
 		// Console.WriteLine("mod loaded but not active");
 
 	}
+	
 }
 public partial class ResoniteLinuxClipboardInterface : IClipboardInterface {
 	public bool ContainsText => false;
@@ -37,31 +36,26 @@ public partial class ResoniteLinuxClipboardInterface : IClipboardInterface {
 
 	public bool ContainsImage => false;
 
-	public void Dispose() {
-		UniLog.Log("disposing");
-		UniLog.Flush();
-	}
+	public void Dispose() {}
 
-	async Task<string> IClipboardInterface.GetText() {
-		await Task.Run(() => {
-			return "";
-		});
+	public async Task<string> GetText() {
+		await Task.Run(() => {});
 		return "";
 	}
 
-	Task<List<string>> IClipboardInterface.GetFiles() {
+	public Task<List<string>> GetFiles() {
 		UniLog.Log("attempting get files");
 		UniLog.Flush();
 		return Task.FromResult<List<string>>([]);
 	}
 
-	Task<Bitmap2D> IClipboardInterface.GetImage() {
+	public Task<Bitmap2D> GetImage() {
 		UniLog.Log("attempting get image");
 		UniLog.Flush();
 		return Task.FromResult<Bitmap2D>(null);
 	}
 
-	Task<bool> IClipboardInterface.SetText(string text) {
+	public Task<bool> SetText(string text) {
 		byte[] bytes = Encoding.UTF8.GetBytes(text);
 		Copy(bytes, (uint)bytes.Length);
 		UniLog.Log("Attempted copy text");
@@ -69,7 +63,7 @@ public partial class ResoniteLinuxClipboardInterface : IClipboardInterface {
 		return Task.FromResult(true);
 	}
 
-	Task<bool> IClipboardInterface.SetBitmap(Bitmap2D bitmap) {
+	public Task<bool> SetBitmap(Bitmap2D bitmap) {
 		int count = bitmap.ElementTotalBytes;
 		byte[] bytes = bitmap.RawData.ToArray();
 		Copy(bytes,(uint)count);
@@ -79,6 +73,6 @@ public partial class ResoniteLinuxClipboardInterface : IClipboardInterface {
 	}
 
 
-	[LibraryImport("libresoniteclipboard_rs", EntryPoint = "copy")]
+	[LibraryImport("../rml_libs/resoniteclipboard_rs", EntryPoint = "copy")]
 	private static partial void Copy(byte[] data, uint data_length);
 }
