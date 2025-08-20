@@ -1,4 +1,3 @@
-using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -7,78 +6,99 @@ using FrooxEngine;
 using HarmonyLib;
 using ResoniteModLoader;
 using Elements.Assets;
-using Renderite.Shared;
 using System.Threading.Tasks;
 using Elements.Core;
-using System.Runtime.CompilerServices;
+using Renderite.Host;
+using System;
+using Renderite.Shared;
+using System.IO;
 
 namespace ResoniteLinuxClipboard;
 
 public class ResoniteLinuxClipboard : ResoniteMod {
-	internal const string VERSION_CONSTANT = "1.0.0"; 
+	internal const string VERSION_CONSTANT = "1.0.0";
 	public override string Name => "ResoniteLinuxClipboard";
 	public override string Author => "Grand";
 	public override string Version => VERSION_CONSTANT;
-	public override string Link => "https://github.com/resonite-modding-group/ExampleMod/";
+	public override string Link => "https://github.com/GrandtheUK/ResoniteLinuxClipboard";
 
 	public override void OnEngineInit() {
-		Engine.Current.RunPostInit( () => {
-			Engine.Current.InputInterface.RegisterClipboardInterface(new ResoniteLinuxClipboardInterface());
-			Msg("clipboard registered");
-		});
-		// Console.WriteLine("mod loaded but not active");
-
+		Harmony harmony = new Harmony("com.GrandtheUK.ResoniteLinuxClipboard");
+		harmony.PatchAll();
 	}
 }
-public partial class ResoniteLinuxClipboardInterface : IClipboardInterface {
-	public bool ContainsText => false;
+
+[HarmonyPatch]
+public static class RenderSystemPatches {
+	[HarmonyPostfix]
+	[HarmonyPatch(typeof(RenderSystem), "RegisterBootstrapperClipboardInterface")]
+	public static void RegisterClipboard_Postfix() {
+		IClipboardInterface? OriginalClipboardInterface = Engine.Current.InputInterface.Clipboard;
+		if (OriginalClipboardInterface != null) {
+		}
+		ResoniteLinuxClipboard.Msg("Registering clipboard");
+		AccessTools.PropertySetter(typeof(InputInterface), "Clipboard").Invoke(
+			Engine.Current.InputInterface, [new ResoniteLinuxClipboardInterface(OriginalClipboardInterface)]
+		);
+		ResoniteLinuxClipboard.Msg("Clipboard registered");
+	}
+}
+
+public class ResoniteLinuxClipboardInterface : IClipboardInterface {
+	private IClipboardInterface? OriginalClipboardInterface;
+
+	public bool ContainsText => true;
 
 	public bool ContainsFiles => false;
 
 	public bool ContainsImage => false;
 
+	public ResoniteLinuxClipboardInterface(IClipboardInterface? OriginalClipboardInterface = null) {
+		this.OriginalClipboardInterface = OriginalClipboardInterface;
+	}
+
 	public void Dispose() {
-		UniLog.Log("disposing");
-		UniLog.Flush();
+		ResoniteLinuxClipboard.Msg("disposing");
 	}
 
-	async Task<string> IClipboardInterface.GetText() {
-		await Task.Run(() => {
-			return "";
-		});
-		return "";
+	public Task<string> GetText() {
+		ResoniteLinuxClipboard.Msg("Attempting get text (fallback on original clipboard interface)");
+		return OriginalClipboardInterface?.GetText() ?? Task.FromResult<string>(null);
 	}
 
-	Task<List<string>> IClipboardInterface.GetFiles() {
-		UniLog.Log("attempting get files");
-		UniLog.Flush();
-		return Task.FromResult<List<string>>([]);
+	public Task<List<string>> GetFiles() {
+		ResoniteLinuxClipboard.Msg("Attempting get files (not implemented yet)");
+		return OriginalClipboardInterface?.GetFiles() ?? Task.FromResult<List<string>>([]);
 	}
 
-	Task<Bitmap2D> IClipboardInterface.GetImage() {
-		UniLog.Log("attempting get image");
-		UniLog.Flush();
-		return Task.FromResult<Bitmap2D>(null);
+	public Task<Bitmap2D> GetImage() {
+		ResoniteLinuxClipboard.Msg("Attempting get image (not implemented yet)");
+		return OriginalClipboardInterface?.GetImage() ?? Task.FromResult<Bitmap2D>(null);
 	}
 
-	Task<bool> IClipboardInterface.SetText(string text) {
-		byte[] bytes = Encoding.UTF8.GetBytes(text);
-		Copy(bytes, (uint)bytes.Length);
-		UniLog.Log("Attempted copy text");
-		UniLog.Flush();
+	public Task<bool> SetText(string text) {
+		ResoniteLinuxClipboard.Msg("Attempting copy text");
+		ExternalFunctions.CopyText(text);
 		return Task.FromResult(true);
 	}
 
-	Task<bool> IClipboardInterface.SetBitmap(Bitmap2D bitmap) {
-		int count = bitmap.ElementTotalBytes;
-		byte[] bytes = bitmap.RawData.ToArray();
-		Copy(bytes,(uint)count);
-		UniLog.Log("Attempted copy image");
-		UniLog.Flush();
+	public Task<bool> SetBitmap(Bitmap2D bitmap) {
+		ResoniteLinuxClipboard.Msg("Attempting copy image");
+		using (MemoryStream stream = new()) {
+			bitmap.Save(stream, "webp");
+			ExternalFunctions.CopyWithType(stream.ToArray(), (uint)stream.Length, "image/webp");
+		}
 		return Task.FromResult(true);
 	}
+}
 
+internal partial class ExternalFunctions {
+	[LibraryImport("resoniteclipboard_rs", EntryPoint = "copy")]
+	public static partial void Copy(byte[] data, uint data_length);
 
-	[LibraryImport("libresoniteclipboard_rs", EntryPoint = "copy")]
-	private static partial void Copy(byte[] data, uint data_length);
+	[LibraryImport("resoniteclipboard_rs", EntryPoint = "copy_text", StringMarshalling = StringMarshalling.Utf8)]
+	public static partial void CopyText(string data);
+
+	[LibraryImport("resoniteclipboard_rs", EntryPoint = "copy_with_type", StringMarshalling = StringMarshalling.Utf8)]
+	public static partial void CopyWithType(byte[] data, uint data_length, string mime_type);
 }

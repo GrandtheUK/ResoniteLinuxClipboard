@@ -46,6 +46,10 @@
 			<HintPath>$(ResonitePath)Renderite.Shared.dll</HintPath>
 			<Private>False</Private>
 		</Reference>
+		<Reference Include="Renderite.Host">
+			<HintPath>$(ResonitePath)Renderite.Host.dll</HintPath>
+			<Private>False</Private>
+		</Reference>
 	</ItemGroup>
 
 	<Target Name="PostBuild" AfterTargets="PostBuildEvent" Condition="'$(CopyToMods)'=='true'">
