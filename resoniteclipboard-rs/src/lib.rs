@@ -4,7 +4,7 @@ use std::slice;
 use wl_clipboard_rs::copy::{MimeType, Options};
 
 #[unsafe(no_mangle)]
-pub extern "C" fn copy(data: *const c_uchar, data_length: u32) {
+pub extern "C" fn copy_auto(data: *const c_uchar, data_length: u32) {
     let data_array = unsafe { slice::from_raw_parts(data, data_length.try_into().unwrap()) };
     match Options::new().copy(
         wl_clipboard_rs::copy::Source::Bytes(data_array.into()),
