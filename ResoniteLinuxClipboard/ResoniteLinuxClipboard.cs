@@ -10,6 +10,8 @@ using System.IO;
 using System.Linq;
 using System;
 using Elements.Core;
+using System.Text;
+using System.Runtime.CompilerServices;
 
 namespace ResoniteLinuxClipboard;
 
@@ -108,9 +110,10 @@ public class ResoniteLinuxClipboardInterface : IClipboardInterface {
 		ResoniteLinuxClipboard.Msg("Attempting get image (DOES NOT WORK YET)");
 		return Task.Run<Bitmap2D>(() => {
 			string preferredMimeType = ImageMimeTypePriority(AvailableMimeTypes);
+			ResoniteLinuxClipboard.Msg($"Preferred MIME type: {preferredMimeType}");
+
 			IntPtr sizePtr = Marshal.AllocHGlobal(sizeof(uint));
 			IntPtr content = ExternalFunctions.PasteWithType(preferredMimeType, sizePtr);
-
 			int size = ConsumeSizePtr(sizePtr);
 
 			Bitmap2D? result = null;
@@ -123,11 +126,14 @@ public class ResoniteLinuxClipboardInterface : IClipboardInterface {
 				return result;
 			}
 
-			MemoryStream data = new(size);
-			Marshal.Copy(content, data.GetBuffer(), 0, size);
-			unsafe { NativeMemory.Free(content.ToPointer()); }
-
-			return Bitmap2D.Load(data, preferredMimeType.Replace("image/", ""), true);
+			Bitmap2D bitmap;
+			unsafe {
+				using (UnmanagedMemoryStream data = new((byte*)content.ToPointer(), size)) {
+					bitmap = Bitmap2D.Load(data, preferredMimeType.Replace("image/", ""), true);
+				}
+				NativeMemory.Free(content.ToPointer());
+			}
+			return bitmap;
 		});
 	}
 
@@ -219,10 +225,10 @@ internal partial class ExternalFunctions {
 	[LibraryImport("resoniteclipboard_rs", EntryPoint = "copy_with_type", StringMarshalling = StringMarshalling.Utf8)]
 	public static partial void CopyWithType(byte[] data, uint data_length, string mime_type);
 
-	[LibraryImport("resoniteclipboard_rs", EntryPoint = "available_mime_types", StringMarshalling = StringMarshalling.Utf8)]
+	[LibraryImport("resoniteclipboard_rs", EntryPoint = "available_mime_types")]
 	public static unsafe partial IntPtr AvailableMimeTypes(IntPtr sizePtr);
 
-	[LibraryImport("resoniteclipboard_rs", EntryPoint = "paste_text", StringMarshalling = StringMarshalling.Utf8)]
+	[LibraryImport("resoniteclipboard_rs", EntryPoint = "paste_text")]
 	public static unsafe partial IntPtr PasteText(IntPtr sizePtr);
 
 	[LibraryImport("resoniteclipboard_rs", EntryPoint = "paste_auto")]
