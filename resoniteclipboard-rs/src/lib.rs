@@ -4,7 +4,7 @@ use std::ptr::null;
 use std::slice;
 
 use wl_clipboard_rs::copy::{self, Options};
-use wl_clipboard_rs::paste::{self, get_contents, get_mime_types, ClipboardType, Seat};
+use wl_clipboard_rs::paste::{self, ClipboardType, Seat, get_contents, get_mime_types};
 
 #[unsafe(no_mangle)]
 pub extern "C" fn copy_auto(data: *const c_uchar, data_length: u32) {
@@ -62,9 +62,12 @@ pub extern "C" fn available_mime_types(size: *mut u32) -> *const c_uchar {
         acc.push('\n');
         acc
     });
-    unsafe {size.write(concatenated.len().try_into().unwrap())}
-    let allocated = unsafe {libc::malloc(concatenated.len())};
-    unsafe {libc::memcpy(allocated, concatenated.as_ptr().cast(), concatenated.len()) };
+    unsafe { size.write(concatenated.len().try_into().unwrap()) }
+    let allocated = unsafe { libc::malloc(concatenated.len()) };
+    let allocated_slice = unsafe {
+        std::slice::from_raw_parts_mut::<u8>(allocated.cast(), concatenated.as_bytes().len())
+    };
+    allocated_slice.copy_from_slice(concatenated.as_bytes());
     allocated.cast()
 }
 
@@ -76,21 +79,21 @@ pub extern "C" fn paste_with_type(mime_type_raw: *const c_char, size: *mut u32) 
         Err(_) => paste::MimeType::Any,
     };
     let (result, length) = paste(mime_type);
-    unsafe {size.write(length.try_into().unwrap())}
+    unsafe { size.write(length.try_into().unwrap()) }
     result
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn paste_auto(size: *mut u32) -> *const c_uchar {
     let (result, length) = paste(paste::MimeType::Any);
-    unsafe {size.write(length.try_into().unwrap())}
+    unsafe { size.write(length.try_into().unwrap()) }
     result
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn paste_text(size: *mut u32) -> *const c_uchar {
     let (result, length) = paste(paste::MimeType::Text);
-    unsafe {size.write(length.try_into().unwrap())}
+    unsafe { size.write(length.try_into().unwrap()) }
     result
 }
 
@@ -100,13 +103,16 @@ fn paste(mime_type: paste::MimeType) -> (*const c_uchar, usize) {
             let mut contents = vec![];
             match p.read_to_end(&mut contents) {
                 Ok(_) => {
-                    let allocated = unsafe {libc::malloc(contents.len())};
-                    unsafe {libc::memcpy(allocated, contents.as_ptr().cast(), contents.len()) };
+                    let allocated = unsafe { libc::malloc(contents.len()) };
+                    let allocated_slice = unsafe {
+                        std::slice::from_raw_parts_mut::<u8>(allocated.cast(), contents.len())
+                    };
+                    allocated_slice.copy_from_slice(&contents);
                     (allocated.cast(), contents.len())
-                },
-                Err(_) => todo!("paste failure")
+                }
+                Err(_) => todo!("paste failure"),
             }
-        },
+        }
         Err(_) => todo!("paste failure"),
     }
 }
