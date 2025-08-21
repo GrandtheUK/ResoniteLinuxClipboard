@@ -48,6 +48,17 @@ public static class RenderSystemPatches {
 	[HarmonyPostfix]
 	[HarmonyPatch(typeof(RenderSystem), "RegisterBootstrapperClipboardInterface")]
 	public static void RegisterClipboard_Postfix() {
+		if (Engine.Current.Platform != Platform.Linux) {
+			ResoniteLinuxClipboard.Warn("This clipboard mod only works on Linux. Skipping.");
+			return;
+		}
+
+		if (Environment.GetEnvironmentVariable("XDG_SESSION_TYPE") == "x11" ||
+			Environment.GetEnvironmentVariable("WAYLAND_DISPLAY") == null) {
+			ResoniteLinuxClipboard.Warn("This clipboard mod only works on Wayland. Skipping.");
+			return;
+		}
+
 		Engine.Current.InputInterface.Clipboard?.Dispose();
 		ResoniteLinuxClipboard.Msg("Registering clipboard");
 		AccessTools.PropertySetter(typeof(InputInterface), "Clipboard").Invoke(
@@ -201,7 +212,7 @@ public class ResoniteLinuxClipboardInterface : IClipboardInterface {
 		Marshal.FreeHGlobal(sizePtr);
 		return size;
 	}
-	
+
 	private static List<string> AvailableMimeTypes {
 		get {
 			IntPtr sizePtr = Marshal.AllocHGlobal(sizeof(uint));
