@@ -10,8 +10,6 @@ using System.IO;
 using System.Linq;
 using System;
 using Elements.Core;
-using System.Text;
-using System.Runtime.CompilerServices;
 
 namespace ResoniteLinuxClipboard;
 
@@ -33,15 +31,16 @@ public class ResoniteLinuxClipboard : ResoniteMod {
 	}
 
 	[AutoRegisterConfigKey]
-	public static readonly ModConfigurationKey<CopyImageFormatEnum> CopyImageFormatKey = new("copy_image_format", "Format in which to export images", () => CopyImageFormatEnum.WEBP);
+	public static readonly ModConfigurationKey<CopyImageFormatEnum> CopyImageFormatKey = new("copy_image_format", "Format in which to export images", () => CopyImageFormatEnum.PNG);
 
 	public static CopyImageFormatEnum CopyImageFormat => Config.GetValue(CopyImageFormatKey);
 }
 
 public enum CopyImageFormatEnum {
-	WEBP,
 	PNG,
+	WEBP,
 	JPG,
+	BMP,
 }
 
 [HarmonyPatch]
@@ -168,17 +167,14 @@ public class ResoniteLinuxClipboardInterface : IClipboardInterface {
 		return mimeTypeEnum switch {
 			CopyImageFormatEnum.WEBP => "image/webp",
 			CopyImageFormatEnum.JPG => "image/jpeg",
+			CopyImageFormatEnum.BMP => "image/bmp",
 			_ => "image/png",
 		};
 
 	}
 
 	private static string ExtensionFromEnum(CopyImageFormatEnum mimeTypeEnum) {
-		return mimeTypeEnum switch {
-			CopyImageFormatEnum.WEBP => "webp",
-			CopyImageFormatEnum.JPG => "jpeg",
-			_ => "png",
-		};
+		return MimeTypeFromEnum(mimeTypeEnum).Replace("image/", "");
 	}
 
 	private static string ImageMimeTypePriority(List<string> types) {
