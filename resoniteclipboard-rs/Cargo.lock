@@ -326,6 +326,7 @@ dependencies = [
 name = "resoniteclipboard-rs"
 version = "0.1.0"
 dependencies = [
+ "libc",
  "safer-ffi",
  "wl-clipboard-rs",
 ]

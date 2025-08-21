@@ -7,6 +7,9 @@ using ResoniteModLoader;
 using Elements.Assets;
 using System.Threading.Tasks;
 using System.IO;
+using System.Linq;
+using System;
+using Elements.Core;
 
 namespace ResoniteLinuxClipboard;
 
@@ -28,15 +31,16 @@ public class ResoniteLinuxClipboard : ResoniteMod {
 	}
 
 	[AutoRegisterConfigKey]
-	public static readonly ModConfigurationKey<CopyImageFormatEnum> CopyImageFormatKey = new("copy_image_format", "Format in which to export images", () => CopyImageFormatEnum.WEBP);
+	public static readonly ModConfigurationKey<CopyImageFormatEnum> CopyImageFormatKey = new("copy_image_format", "Format in which to export images", () => CopyImageFormatEnum.PNG);
 
 	public static CopyImageFormatEnum CopyImageFormat => Config.GetValue(CopyImageFormatKey);
 }
 
 public enum CopyImageFormatEnum {
-	WEBP,
 	PNG,
+	WEBP,
 	JPG,
+	BMP,
 }
 
 [HarmonyPatch]
@@ -44,45 +48,103 @@ public static class RenderSystemPatches {
 	[HarmonyPostfix]
 	[HarmonyPatch(typeof(RenderSystem), "RegisterBootstrapperClipboardInterface")]
 	public static void RegisterClipboard_Postfix() {
-		IClipboardInterface? OriginalClipboardInterface = Engine.Current.InputInterface.Clipboard;
+		if (Engine.Current.Platform != Platform.Linux) {
+			ResoniteLinuxClipboard.Warn("This clipboard mod only works on Linux. Skipping.");
+			return;
+		}
+
+		if (Environment.GetEnvironmentVariable("XDG_SESSION_TYPE") == "x11" ||
+			Environment.GetEnvironmentVariable("WAYLAND_DISPLAY") == null) {
+			ResoniteLinuxClipboard.Warn("This clipboard mod only works on Wayland. Skipping.");
+			return;
+		}
+
+		Engine.Current.InputInterface.Clipboard?.Dispose();
 		ResoniteLinuxClipboard.Msg("Registering clipboard");
 		AccessTools.PropertySetter(typeof(InputInterface), "Clipboard").Invoke(
-			Engine.Current.InputInterface, [new ResoniteLinuxClipboardInterface(OriginalClipboardInterface)]
+			Engine.Current.InputInterface, [new ResoniteLinuxClipboardInterface()]
 		);
 		ResoniteLinuxClipboard.Msg("Clipboard registered");
 	}
 }
 
 public class ResoniteLinuxClipboardInterface : IClipboardInterface {
-	private IClipboardInterface? OriginalClipboardInterface;
+	private static readonly string[] TEXT_TYPES = {
+		"UTF8_STRING",
+		"TEXT",
+		"STRING"
+	};
 
-	public bool ContainsText => true;
+	private static readonly string[] IMAGE_PRIORITY_TYPES = {
+		"image/png",
+		"image/webp",
+		"image/jpeg",
+		"image/bmp"
+	};
 
-	public bool ContainsFiles => false;
-
-	public bool ContainsImage => false;
-
-	public ResoniteLinuxClipboardInterface(IClipboardInterface? OriginalClipboardInterface = null) {
-		this.OriginalClipboardInterface = OriginalClipboardInterface;
+	private static bool IsText(string mimeType) {
+		return mimeType.StartsWith("text/") || TEXT_TYPES.Contains(mimeType);
 	}
+
+	public bool ContainsText => AvailableMimeTypes.Any(IsText);
+
+	public bool ContainsFiles => AvailableMimeTypes.Contains("text/uri-list");
+
+	public bool ContainsImage => AvailableMimeTypes.Any(t => t.StartsWith("image/"));
 
 	public void Dispose() {
 		ResoniteLinuxClipboard.Msg("disposing");
 	}
 
 	public Task<string> GetText() {
-		ResoniteLinuxClipboard.Msg("Attempting get text (fallback on original clipboard interface)");
-		return OriginalClipboardInterface?.GetText() ?? Task.FromResult<string>(null);
+		ResoniteLinuxClipboard.Msg("Attempting get text");
+		return Task.Run(() => {
+			IntPtr sizePtr = Marshal.AllocHGlobal(sizeof(int));
+			IntPtr content = ExternalFunctions.PasteText(sizePtr);
+			return ConsumeStringPtr(content, sizePtr);
+		});
 	}
 
 	public Task<List<string>> GetFiles() {
-		ResoniteLinuxClipboard.Msg("Attempting get files (not implemented yet)");
-		return OriginalClipboardInterface?.GetFiles() ?? Task.FromResult<List<string>>([]);
+		ResoniteLinuxClipboard.Msg("Attempting get files");
+		return Task.Run(() => {
+			IntPtr sizePtr = Marshal.AllocHGlobal(sizeof(uint));
+			IntPtr content = ExternalFunctions.PasteWithType("text/uri-list", sizePtr);
+			return ConsumeStringPtr(content, sizePtr)
+				.Trim().Split("\n").Where(x => x.Length > 0)
+				.Select(x => x.Replace("file://", "")).ToList();
+		});
 	}
 
 	public Task<Bitmap2D> GetImage() {
-		ResoniteLinuxClipboard.Msg("Attempting get image (not implemented yet)");
-		return OriginalClipboardInterface?.GetImage() ?? Task.FromResult<Bitmap2D>(null);
+		ResoniteLinuxClipboard.Msg("Attempting get image (DOES NOT WORK YET)");
+		return Task.Run<Bitmap2D>(() => {
+			string preferredMimeType = ImageMimeTypePriority(AvailableMimeTypes);
+			ResoniteLinuxClipboard.Msg($"Preferred MIME type: {preferredMimeType}");
+
+			IntPtr sizePtr = Marshal.AllocHGlobal(sizeof(uint));
+			IntPtr content = ExternalFunctions.PasteWithType(preferredMimeType, sizePtr);
+			int size = ConsumeSizePtr(sizePtr);
+
+			Bitmap2D? result = null;
+			if (content == IntPtr.Zero) {
+				return result;
+			}
+
+			if (size <= 0) {
+				unsafe { NativeMemory.Free(content.ToPointer()); }
+				return result;
+			}
+
+			Bitmap2D bitmap;
+			unsafe {
+				using (UnmanagedMemoryStream data = new((byte*)content.ToPointer(), size)) {
+					bitmap = Bitmap2D.Load(data, preferredMimeType.Replace("image/", ""), true);
+				}
+				NativeMemory.Free(content.ToPointer());
+			}
+			return bitmap;
+		});
 	}
 
 	public Task<bool> SetText(string text) {
@@ -116,18 +178,47 @@ public class ResoniteLinuxClipboardInterface : IClipboardInterface {
 		return mimeTypeEnum switch {
 			CopyImageFormatEnum.WEBP => "image/webp",
 			CopyImageFormatEnum.JPG => "image/jpeg",
+			CopyImageFormatEnum.BMP => "image/bmp",
 			_ => "image/png",
 		};
 
 	}
 
 	private static string ExtensionFromEnum(CopyImageFormatEnum mimeTypeEnum) {
-		return mimeTypeEnum switch {
-			CopyImageFormatEnum.WEBP => "webp",
-			CopyImageFormatEnum.JPG => "jpeg",
-			_ => "png",
-		};
+		return MimeTypeFromEnum(mimeTypeEnum).Replace("image/", "");
+	}
 
+	private static string ImageMimeTypePriority(List<string> types) {
+		return IMAGE_PRIORITY_TYPES.FirstOrDefault(types.Contains, types.First());
+	}
+
+	private static string ConsumeStringPtr(IntPtr ptr, IntPtr sizePtr) {
+		int size = ConsumeSizePtr(sizePtr);
+
+		if (ptr == IntPtr.Zero) {
+			return "";
+		}
+
+		string? result = null;
+		if (size > 0) {
+			result = Marshal.PtrToStringAuto(ptr, size);
+		}
+		unsafe { NativeMemory.Free(ptr.ToPointer()); }
+		return result ?? "";
+	}
+
+	private static int ConsumeSizePtr(IntPtr sizePtr) {
+		int size = Marshal.ReadInt32(sizePtr);
+		Marshal.FreeHGlobal(sizePtr);
+		return size;
+	}
+
+	private static List<string> AvailableMimeTypes {
+		get {
+			IntPtr sizePtr = Marshal.AllocHGlobal(sizeof(uint));
+			IntPtr content = ExternalFunctions.AvailableMimeTypes(sizePtr);
+			return ConsumeStringPtr(content, sizePtr).Trim().Split("\n").Where(x => x.Length > 0).ToList();
+		}
 	}
 }
 
@@ -140,4 +231,16 @@ internal partial class ExternalFunctions {
 
 	[LibraryImport("resoniteclipboard_rs", EntryPoint = "copy_with_type", StringMarshalling = StringMarshalling.Utf8)]
 	public static partial void CopyWithType(byte[] data, uint data_length, string mime_type);
+
+	[LibraryImport("resoniteclipboard_rs", EntryPoint = "available_mime_types")]
+	public static unsafe partial IntPtr AvailableMimeTypes(IntPtr sizePtr);
+
+	[LibraryImport("resoniteclipboard_rs", EntryPoint = "paste_text")]
+	public static unsafe partial IntPtr PasteText(IntPtr sizePtr);
+
+	[LibraryImport("resoniteclipboard_rs", EntryPoint = "paste_auto")]
+	public static unsafe partial IntPtr PasteAuto(IntPtr sizePtr);
+
+	[LibraryImport("resoniteclipboard_rs", EntryPoint = "paste_with_type", StringMarshalling = StringMarshalling.Utf8)]
+	public static unsafe partial IntPtr PasteWithType(string mime_type, IntPtr sizePtr);
 }
